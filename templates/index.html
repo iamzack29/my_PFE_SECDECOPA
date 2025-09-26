@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SECDCOPA Protocol Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@1.2.1/dist/chartjs-plugin-zoom.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>SECDCOPA Protocol Dashboard</h1>
+        
+        </header>
+
+        <div class="main-content">
+            <div class="config-panel">
+                <h2>Configuration</h2>
+                <form id="sim-form">
+                    <fieldset>
+                        <legend>Network</legend>
+                        <label>Nodes <input type="number" id="num_nodes" value="50"></label>
+                        <label>Rounds <input type="number" id="sim_rounds" value="500"></label>
+                        <label>Initial Energy <input type="number" id="e_initial" value="500"></label>
+                    </fieldset>
+                    <fieldset>
+                        <legend>Protocol</legend>
+                        <label>CH Probability <input type="number" id="p_ch_prob" value="0.1" step="0.01"></label>
+                        <label>Cluster Capacity <input type="number" id="cluster_capacity" value="5"></label>
+                        <label>Trust Threshold <input type="number" id="ts_threshold" value="0.5" step="0.1"></label>
+                    </fieldset>
+                    <fieldset>
+                        <legend>Security</legend>
+                        <label>Attack Start <input type="number" id="attack_start" value="50"></label>
+                        <label>Attack End <input type="number" id="attack_end" value="150"></label>
+                    </fieldset>
+                </form>
+                <div class="controls">
+                    <h2>Controls</h2>
+                    <button onclick="runSimulation('baseline')">Run Baseline DECOPA</button>
+                    <button onclick="runSimulation('secdcopa')">Run SECDCOPA</button>
+                    <button onclick="runSimulation('compare')">Run & Compare</button>
+                </div>
+            </div>
+
+            <div class="results-panel">
+                <div class="status-log-container">
+                    <div class="status-box" id="status-box">Status: Idle</div>
+                    <div class="log-box">
+                        <h3>Live Console Log</h3>
+                        <pre id="log-output"></pre>
+                    </div>
+                </div>
+                
+                 <div class="tabs">
+                    <button class="tab-link active" onclick="openTab(event, 'summary')">Summary</button>
+                    <button class="tab-link" onclick="openTab(event, 'cluster_dynamics')">Cluster Dynamics & Security</button>
+                    <button class="tab-link" onclick="openTab(event, 'energy')">Energy Analysis</button>
+                    <button class="tab-link" onclick="openTab(event, 'security_integrity')">Data Integrity</button>
+                </div>
+
+                <div id="summary" class="tab-content" style="display: block;">
+                    <h3>Results Summary</h3>
+                    <table id="summary-table"></table>
+                </div>
+                <div id="cluster_dynamics" class="tab-content">
+                    <div class="chart-grid">
+                         <div class="chart-container grid-span-2"><canvas id="ch-chart"></canvas></div>
+                         <div class="chart-container"><canvas id="refusals-chart"></canvas></div>
+                         <div class="chart-container"><canvas id="exclusions-chart"></canvas></div>
+                    </div>
+                </div>
+                <div id="energy" class="tab-content">
+                    <div class="chart-container full-height"><canvas id="energy-chart"></canvas></div>
+                </div>
+                 <div id="security_integrity" class="tab-content">
+                    <div class="chart-container full-height"><canvas id="security-chart"></canvas></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    // --- CHART & STATE MANAGEMENT ---
+    let charts = {};
+
+      const chartColors = {
+        baseline: '#0d6efd',         // Professional Blue
+        secdcopa: '#fd7e14',         // Vibrant Orange
+        exclusion: '#dc3545',       // Crimson Red (for critical events)
+        baseline_light: 'rgba(13, 110, 253, 0.5)', // Lighter blue for secondary data
+        secdcopa_light: 'rgba(253, 126, 20, 0.5)'  // Lighter orange for secondary data
+    };
+    
+    function destroyCharts() {
+        Object.values(charts).forEach(chart => chart.destroy());
+        charts = {};
+    }
+
+    // --- TAB HANDLING ---
+    function openTab(evt, tabName) {
+        document.querySelectorAll('.tab-content').forEach(tc => tc.style.display = 'none');
+        document.querySelectorAll('.tab-link').forEach(tl => tl.classList.remove('active'));
+        document.getElementById(tabName).style.display = 'block';
+        evt.currentTarget.classList.add('active');
+    }
+
+    // --- SIMULATION TRIGGER ---
+    async function runSimulation(type) {
+        const statusBox = document.getElementById('status-box');
+        const logOutput = document.getElementById('log-output');
+        statusBox.textContent = 'Status: Running simulation...';
+        statusBox.className = 'status-box running';
+        logOutput.textContent = ''; // Clear previous logs
+        
+        const params = {
+            run_type: type,
+            num_nodes: document.getElementById('num_nodes').value,
+            sim_rounds: document.getElementById('sim_rounds').value,
+            e_initial: document.getElementById('e_initial').value,
+            p_ch_prob: document.getElementById('p_ch_prob').value,
+            cluster_capacity: document.getElementById('cluster_capacity').value,
+            ts_threshold: document.getElementById('ts_threshold').value,
+            attack_start: document.getElementById('attack_start').value,
+            attack_end: document.getElementById('attack_end').value,
+        };
+
+        try {
+            const response = await fetch('/run', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(params),
+            });
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const results = await response.json();
+            
+            updateUI(results);
+
+            statusBox.textContent = 'Status: Finished';
+            statusBox.className = 'status-box finished';
+        } catch (error) {
+            console.error("Simulation failed:", error);
+            statusBox.textContent = 'Status: Error!';
+            statusBox.className = 'status-box error';
+            logOutput.textContent = `An error occurred: ${error.message}`;
+        }
+    }
+
+    // --- UI UPDATE LOGIC ---
+    function updateUI(data) {
+        destroyCharts();
+        updateLog(data);
+        updateSummaryTable(data);
+        updateCharts(data);
+    }
+
+    function updateLog(data) {
+        const logOutput = document.getElementById('log-output');
+        let allLogs = [];
+        if (data.baseline) allLogs.push(...data.baseline.log);
+        if (data.secdcopa) allLogs.push(...data.secdcopa.log);
+        
+        logOutput.innerHTML = allLogs.map(log => 
+            `<span class="log-${log.level.toLowerCase()}">[${log.time}] ${log.msg}</span>`
+        ).join('\n');
+    }
+
+    function updateSummaryTable(data) {
+        const table = document.getElementById('summary-table');
+        table.innerHTML = ''; // Clear table
+        
+        const headers = ['Metric', data.baseline ? 'Baseline' : '', data.secdcopa ? 'SECDCOPA' : ''].filter(Boolean);
+        let headHtml = '<thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead>';
+        
+        const metrics = ["Network Lifetime", "Data Integrity Rate", "Malicious Detection Time", "Falsified Packets at BS", "Total Energy Consumed", "Avg. Energy/Node/Round"];
+        let bodyHtml = '<tbody>';
+        metrics.forEach(metric => {
+            bodyHtml += '<tr>';
+            bodyHtml += `<td>${metric}</td>`;
+            if (data.baseline) bodyHtml += `<td>${data.baseline.table_data[metric] || '...'}</td>`;
+            if (data.secdcopa) bodyHtml += `<td>${data.secdcopa.table_data[metric] || '...'}</td>`;
+            bodyHtml += '</tr>';
+        });
+        bodyHtml += '</tbody>';
+        table.innerHTML = headHtml + bodyHtml;
+    }
+
+    // templates/index.html -> inside the <script> tag
+
+// REPLACE THE ENTIRE updateCharts FUNCTION WITH THIS
+function updateCharts(data) {
+    const rounds = Math.max(data.baseline?.plot_data.energy.length || 0, data.secdcopa?.plot_data.energy.length || 0);
+    const labels = Array.from({length: rounds}, (_, i) => i + 1);
+    
+    // CHART 1: Cluster Election
+    createChart('ch-chart', 'line', 'Cluster Election: Active CHs per Round', labels, [
+        data.baseline && { label: 'Baseline', data: data.baseline.plot_data.chs, borderColor: chartColors.baseline, backgroundColor: chartColors.baseline_light },
+        data.secdcopa && { label: 'SECDCOPA', data: data.secdcopa.plot_data.chs, borderColor: chartColors.secdcopa, backgroundColor: chartColors.secdcopa_light }
+    ]);
+    
+    // CHART 2: Join Refusals
+    createChart('refusals-chart', 'line', 'Security: Cluster Join Refusals per Round', labels, [
+        data.baseline && { label: 'Baseline Refusals', data: data.baseline.plot_data.refusals, borderColor: chartColors.baseline, borderWidth: 2, borderDash: [5, 5] },
+        data.secdcopa && { label: 'SECDCOPA Refusals', data: data.secdcopa.plot_data.refusals, borderColor: chartColors.secdcopa, borderWidth: 2 }
+    ]);
+
+    // CHART 3: Malicious Exclusions - CHANGED TO A LINE CHART FOR CLARITY
+    createChart('exclusions-chart', 'line', 'Security: Malicious Node Exclusions (SECDCOPA)', labels, [
+        data.secdcopa && { 
+            label: 'Nodes Excluded', 
+            data: data.secdcopa.plot_data.exclusions, 
+            borderColor: chartColors.exclusion,
+            backgroundColor: 'rgba(220, 53, 69, 0.2)', // Light red fill under the line
+            borderWidth: 2.5,
+            stepped: true, // This creates the sharp spike effect
+            fill: true
+        }
+    ]);
+
+    // CHART 4: Energy Consumption
+    createChart('energy-chart', 'line', 'Total Energy Consumption Over Time', labels, [
+        data.baseline && { label: 'Baseline', data: data.baseline.plot_data.energy, borderColor: chartColors.baseline },
+        data.secdcopa && { label: 'SECDCOPA', data: data.secdcopa.plot_data.energy, borderColor: chartColors.secdcopa }
+    ]);
+
+    // CHART 5: Data Integrity
+    const secLabels = ['Valid Packets', 'Falsified Packets'];
+    const secDatasets = [];
+    if(data.baseline) {
+        const b_valid = data.baseline.plot_data.total_packets - data.baseline.plot_data.falsified_packets;
+        secDatasets.push({ label: 'Baseline', data: [b_valid, data.baseline.plot_data.falsified_packets], backgroundColor: [chartColors.baseline_light, chartColors.baseline] });
+    }
+    if(data.secdcopa) {
+        const s_valid = data.secdcopa.plot_data.total_packets - data.secdcopa.plot_data.falsified_packets;
+        secDatasets.push({ label: 'SECDCOPA', data: [s_valid, data.secdcopa.plot_data.falsified_packets], backgroundColor: [chartColors.secdcopa_light, chartColors.secdcopa] });
+    }
+    createChart('security-chart', 'bar', 'Data Integrity: Packets Received at Base Station', secLabels, secDatasets);
+}
+
+    // templates/index.html -> inside the <script> tag
+
+// REPLACE THE ENTIRE createChart FUNCTION WITH THIS
+function createChart(canvasId, type, title, labels, datasets, scales = {}) {
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    charts[canvasId] = new Chart(ctx, {
+        type: type,
+        data: {
+            labels: labels,
+            datasets: datasets.filter(Boolean).map(ds => ({
+                ...ds,
+                fill: false,
+                borderWidth: 2,
+                pointRadius: 0,
+            }))
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { 
+                title: { display: true, text: title, font: {size: 16} },
+                // NEW ZOOM CONFIGURATION
+                zoom: {
+                    pan: {
+                        enabled: true,
+                        mode: 'xy',
+                    },
+                    zoom: {
+                        wheel: { enabled: true },
+                        pinch: { enabled: true },
+                        mode: 'xy',
+                    }
+                }
+            },
+            scales: scales
+        }
+    });
+}
+</script>
+</body>
+</html>```
+
